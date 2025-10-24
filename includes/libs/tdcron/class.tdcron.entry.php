@@ -1,324 +1,173 @@
 <?php
-
-	/**
-	 * tinyCronEntry is part of tdCron. Its a class to parse Cron-Expressions like "1-45 1,2,3 1-30/5 January,February Mon,Tue"
-	 * and convert it to an easily useable format.
-	 *
-	 * The parser is quite powerful and understands pretty much everything you will ever find in a Cron-Expression.
-	 *
-	 * A Cron-Expression consists of 5 segments:
-	 *
-	 * <pre>
-	 *  .---------------- minute (0 - 59)
-	 *  |   .------------- hour (0 - 23)
-	 *  |   |   .---------- day of month (1 - 31)
-	 *  |   |   |   .------- month (1 - 12)
-	 *  |   |   |   |  .----- day of week (0 - 6)
-	 *  |   |   |   |  |
-	 *  *   *   *   *  *
-	 * </pre>
-	 *
-	 * Each segment can contain values, ranges and intervals. A range is always written as "value1-value2" and
-	 * intervals as "value1/value2".
-	 *
-	 * Of course each segment can contain multiple values seperated by commas.
-	 *
-	 * Some valid examples:
-	 *
-	 * <pre>
-	 * 1,2,3,4,5
-	 * 1-5
-	 * 10-20/*
-	 * Jan,Feb,Oct
-	 * Monday-Friday
-	 * 1-10,15,20,40-50/2
-	 * </pre>
-	 *
-	 * The current version of the parser understands all weekdays and month names in german and english!
-	 *
-	 * Usually you won't need to call this class directly.
-	 *
-	 * Copyright (c) 2010 Christian Land / tagdocs.de
-	 *
-	 * Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
-	 * associated documentation files (the "Software"), to deal in the Software without restriction,
-	 * including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
-	 * and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
-	 * subject to the following conditions:
-	 *
-	 * The above copyright notice and this permission notice shall be included in all copies or substantial
-	 * portions of the Software.
-	 *
-	 * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
-	 * LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-	 * NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
-	 * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-	 * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-	 *
-	 * @author	Christian Land <devel@tagdocs.de>
-	 * @package	tinyCron
-	 * @subpackage	tinyCronEntry
-	 * @copyright	Copyright (c) 2010, Christian Land / tagdocs.de
-	 * @version	v0.0.1 beta
-	 */
-
-	class tdCronEntry {
-
-		/**
-		 * The parsed cron-expression.
-		 * @var mixed
-		 */
-		static private $cron		= array();
-
-		/**
-		 * Ranges.
-		 * @var mixed
-		 */
-		static private $ranges		= array(
-							IDX_MINUTE		=> array( 'min'	=> 0,
-											  'max'	=> 59	),	// Minutes
-							IDX_HOUR		=> array( 'min'	=> 0,
-											  'max'	=> 23	),	// Hours
-							IDX_DAY			=> array( 'min'	=> 1,
-											  'max'	=> 31	),	// Days
-							IDX_MONTH		=> array( 'min'	=> 1,
-											  'max'	=> 12	),	// Months
-							IDX_WEEKDAY		=> array( 'min'	=> 0,
-											  'max'	=> 7	)	// Weekdays
-						);
-
-		/**
-		 * Named intervals.
-		 * @var mixed
-		 */
-		static private $intervals	= array(
-							'@yearly'	=> '0 0 1 1 *',
-							'@annualy'	=> '0 0 1 1 *',
-							'@monthly'	=> '0 0 1 * *',
-							'@weekly'	=> '0 0 * * 0',
-							'@midnight'	=> '0 0 * * *',
-							'@daily'	=> '0 0 * * *',
-							'@hourly'	=> '0 * * * *'
-							);
-
-
-		/**
-		 * Possible keywords for months/weekdays.
-		 * @var mixed
-		 */
-		static private $keywords	= array(
-							IDX_MONTH	=> array(
-										'/(january|januar|jan)/i'			=> 1,
-										'/(february|februar|feb)/i'			=> 2,
-										'/(march|maerz|m�rz|mar|mae|m�r)/i'		=> 3,
-										'/(april|apr)/i'				=> 4,
-										'/(may|mai)/i'					=> 5,
-										'/(june|juni|jun)/i'				=> 6,
-										'/(july|juli|jul)/i'				=> 7,
-										'/(august|aug)/i'				=> 8,
-										'/(september|sep)/i'				=> 9,
-										'/(october|oktober|okt|oct)/i'			=> 10,
-										'/(november|nov)/i'				=> 11,
-										'/(december|dezember|dec|dez)/i'		=> 12
-										),
-							IDX_WEEKDAY	=> array(
-										'/(sunday|sonntag|sun|son|su|so)/i'		=> 0,
-										'/(monday|montag|mon|mo)/i'			=> 1,
-										'/(tuesday|dienstag|die|tue|tu|di)/i'		=> 2,
-										'/(wednesdays|mittwoch|mit|wed|we|mi)/i'	=> 3,
-										'/(thursday|donnerstag|don|thu|th|do)/i'	=> 4,
-										'/(friday|freitag|fre|fri|fr)/i'		=> 5,
-										'/(saturday|samstag|sam|sat|sa)/i'		=> 6
-										)
-							);
-
-		/**
-		 * parseExpression() analyses crontab-expressions like "* * 1,2,3 * mon,tue" and returns an array
-		 * containing all values. If it can't be parsed, an exception is thrown.
-		 *
-		 * @access		public
-		 * @param		string		$expression	The cron-expression to parse.
-		 * @return		mixed
-		 */
-
-		static public function parse($expression) {
-
-			// Convert named expressions if neccessary
-
-			if (substr($expression,0,1) == '@') {
-
-				$expression	= strtr($expression, self::$intervals);
-
-				if (substr($expression,0,1) == '@') {
-
-					// Oops... unknown named interval!?!!
-					throw new Exception('Unknown named interval ['.$expression.']', 10000);
-
-				}
-
-			}
-
-			// Next basic check... do we have 5 segments?
-
-			$cron	= explode(' ',$expression);
-
-			if (count($cron) <> 5) {
-
-				// No... we haven't...
-				throw new Exception('Wrong number of segments in expression. Expected: 5, Found: '.count($cron), 10001);
-
-			} else {
-
-				// Yup, 5 segments... lets see if we can work with them
-
-				foreach ($cron as $idx=>$segment) {
-
-					try {
-
-						$dummy[$idx]	= self::expandSegment($idx, $segment);
-
-					} catch (Exception $e) {
-
-						throw $e;
-
-					}
-
-				}
-
-			}
-
-			return $dummy;
-
-		}
-
-		/**
-		 * expandSegment() analyses a single segment
-		 *
-		 * @access		public
-		 * @param		void
-		 * @return		void
-		 */
-
-		static private function expandSegment($idx, $segment) {
-
-			// Store original segment for later use
-
-			$osegment	= $segment;
-
-			// Replace months/weekdays like "January", "February", etc. with numbers
-
-	                if (isset(self::$keywords[$idx])) {
-
-	                	$segment	= preg_replace(
-	                					array_keys(self::$keywords[$idx]),
-	                					array_values(self::$keywords[$idx]),
-	                					$segment
-	                					);
-
-			}
-
-			// Replace wildcards
-
-			if (substr($segment,0,1) == '*') {
-
-				$segment	= preg_replace('/^\*(\/\d+)?$/i',
-								self::$ranges[$idx]['min'].'-'.self::$ranges[$idx]['max'].'$1',
-								$segment);
-
-			}
-
-			// Make sure that nothing unparsed is left :)
-
-			$dummy		= preg_replace('/[0-9\-\/\,]/','',$segment);
-
-			if (!empty($dummy)) {
-
-				// Ohoh.... thats not good :-)
-				throw new Exception('Failed to parse segment: '.$osegment, 10002);
-
-			}
-
-			// At this point our string should be OK - lets convert it to an array
-
-			$result		= array();
-			$atoms		= explode(',',$segment);
-
-			foreach ($atoms as $curatom) {
-
-				$result	= array_merge($result, self::parseAtom($curatom));
-
-			}
-
-			// Get rid of duplicates and sort the array
-
-			$result		= array_unique($result);
-			sort($result);
-
-			// Check for invalid values
-
-			if ($idx == IDX_WEEKDAY) {
-
-				if (end($result) == 7) {
-
-					if (reset($result) <> 0) {
-						array_unshift($result, 0);
-					}
-
-					array_pop($result);
-
-				}
-
-			}
-
-			foreach ($result as $key=>$value) {
-
-				if (($value < self::$ranges[$idx]['min']) || ($value > self::$ranges[$idx]['max'])) {
-					throw new Exception('Failed to parse segment, invalid value ['.$value.']: '.$osegment, 10003);
-				}
-
-			}
-
-			return $result;
-
-		}
-
-		/**
-		 * parseAtom() analyses a single segment
-		 *
-		 * @access		public
-		 * @param		string		$atom		The segment to parse
-		 * @return		array
-		 */
-
-		static private function parseAtom($atom) {
-
-			$expanded	= array();
-
-			if (preg_match('/^(\d+)-(\d+)(\/(\d+))?/i', $atom, $matches)) {
-
-				$low	= $matches[1];
-				$high	= $matches[2];
-
-				if ($low > $high) {
-					list($low,$high)	= array($high,$low);
-				}
-
-				$step	= isset($matches[4]) ? $matches[4] : 1;
-
-				for($i = $low; $i <= $high; $i += $step) {
-					$expanded[]	= (int)$i;
-				}
-
-			} else {
-
-				$expanded[]	= (int)$atom;
-
-			}
-
-			$expanded2	= array_unique($expanded);
-
-			return $expanded;
-
-		}
-
-	}
+declare(strict_types=1);
+
+/**
+ * tdCronEntry – Parser für klassische Cron-Expressions (min hour dom month dow)
+ * Unterstützt Werte, Bereiche, Intervalle, Monats- und Wochentagsnamen.
+ * Kompatibel mit PHP 8.1–8.3
+ */
+class tdCronEntry
+{
+    /** @var array<int,array{min:int,max:int}> */
+    private static array $ranges = [
+        IDX_MINUTE  => ['min' => 0,  'max' => 59],
+        IDX_HOUR    => ['min' => 0,  'max' => 23],
+        IDX_DAY     => ['min' => 1,  'max' => 31],
+        IDX_MONTH   => ['min' => 1,  'max' => 12],
+        IDX_WEEKDAY => ['min' => 0,  'max' => 7],
+    ];
+
+    /** @var array<string,string> */
+    private static array $intervals = [
+        '@yearly'   => '0 0 1 1 *',
+        '@annualy'  => '0 0 1 1 *',
+        '@monthly'  => '0 0 1 * *',
+        '@weekly'   => '0 0 * * 0',
+        '@midnight' => '0 0 * * *',
+        '@daily'    => '0 0 * * *',
+        '@hourly'   => '0 * * * *',
+    ];
+
+    /** @var array<int,array<string,int>> */
+    private static array $keywords = [
+        IDX_MONTH => [
+            '/\b(january|januar|jan)\b/i'     => 1,
+            '/\b(february|februar|feb)\b/i'   => 2,
+            '/\b(march|maerz|märz|mar|mae|mär)\b/i' => 3,
+            '/\b(april|apr)\b/i'              => 4,
+            '/\b(may|mai)\b/i'                => 5,
+            '/\b(june|juni|jun)\b/i'          => 6,
+            '/\b(july|juli|jul)\b/i'          => 7,
+            '/\b(august|aug)\b/i'             => 8,
+            '/\b(september|sep)\b/i'          => 9,
+            '/\b(october|oktober|okt|oct)\b/i'=> 10,
+            '/\b(november|nov)\b/i'           => 11,
+            '/\b(december|dezember|dec|dez)\b/i'=> 12,
+        ],
+        IDX_WEEKDAY => [
+            '/\b(sunday|sonntag|sun|son|su|so)\b/i'   => 0,
+            '/\b(monday|montag|mon|mo)\b/i'           => 1,
+            '/\b(tuesday|dienstag|die|tue|tu|di)\b/i' => 2,
+            '/\b(wednesday|mittwoch|mit|wed|we|mi)\b/i'=> 3,
+            '/\b(thursday|donnerstag|don|thu|th|do)\b/' => 4,
+            '/\b(friday|freitag|fre|fri|fr)\b/i'      => 5,
+            '/\b(saturday|samstag|sam|sat|sa)\b/i'    => 6,
+        ],
+    ];
+
+    /**
+     * Parst eine vollständige Cron-Expression in ein Array von Zahlenwerten.
+     * @throws Exception bei fehlerhafter Syntax
+     * @return array<int,int[]>
+     */
+    public static function parse(string $expression): array
+    {
+        $expression = trim($expression);
+
+        // Named interval umwandeln (z. B. @hourly)
+        if (str_starts_with($expression, '@')) {
+            $expression = strtr($expression, self::$intervals);
+            if (str_starts_with($expression, '@')) {
+                throw new Exception("Unknown named interval: {$expression}", 10000);
+            }
+        }
+
+        // In Segmente teilen
+        $parts = preg_split('/\s+/', $expression);
+        if (!$parts || count($parts) !== 5) {
+            throw new Exception("Invalid cron expression: expected 5 segments, got " . count($parts), 10001);
+        }
+
+        $result = [];
+        foreach ($parts as $idx => $segment) {
+            $result[$idx] = self::expandSegment($idx, $segment);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Expandiert ein einzelnes Segment in Zahlenwerte.
+     * @throws Exception
+     * @return int[]
+     */
+    private static function expandSegment(int $idx, string $segment): array
+    {
+        $original = $segment;
+
+        // Monat/Wochentag-Keywords ersetzen
+        if (isset(self::$keywords[$idx])) {
+            $segment = preg_replace(
+                array_keys(self::$keywords[$idx]),
+                array_values(self::$keywords[$idx]),
+                $segment
+            );
+        }
+
+        // Wildcards * → vollständiger Bereich
+        if (preg_match('/^\*(?:\/(\d+))?$/', $segment, $m)) {
+            $step = isset($m[1]) ? (int)$m[1] : 1;
+            $segment = self::$ranges[$idx]['min'] . '-' . self::$ranges[$idx]['max'] . '/' . $step;
+        }
+
+        // Sicherheitsprüfung
+        if (preg_match('/[^0-9,\-\/]/', $segment)) {
+            throw new Exception("Failed to parse segment: {$original}", 10002);
+        }
+
+        // Mehrfachwerte splitten
+        $values = [];
+        foreach (explode(',', $segment) as $atom) {
+            $values = array_merge($values, self::parseAtom($atom));
+        }
+
+        $values = array_unique($values);
+        sort($values);
+
+        // Woche 0/7 behandeln
+        if ($idx === IDX_WEEKDAY && end($values) === 7) {
+            if (reset($values) !== 0) {
+                array_unshift($values, 0);
+            }
+            array_pop($values);
+        }
+
+        // Bereichsprüfung
+        foreach ($values as $v) {
+            if ($v < self::$ranges[$idx]['min'] || $v > self::$ranges[$idx]['max']) {
+                throw new Exception("Invalid value {$v} in segment: {$original}", 10003);
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * Zerlegt einen Atom-String (z. B. „5“, „1-10/2“) in Werte.
+     * @return int[]
+     */
+    private static function parseAtom(string $atom): array
+    {
+        $atom = trim($atom);
+        if ($atom === '') {
+            return [];
+        }
+
+        if (preg_match('/^(\d+)-(\d+)(?:\/(\d+))?$/', $atom, $m)) {
+            $low  = (int)$m[1];
+            $high = (int)$m[2];
+            if ($low > $high) {
+                [$low, $high] = [$high, $low];
+            }
+            $step = isset($m[3]) ? max(1, (int)$m[3]) : 1;
+
+            $out = [];
+            for ($i = $low; $i <= $high; $i += $step) {
+                $out[] = $i;
+            }
+            return $out;
+        }
+
+        return [(int)$atom];
+    }
+}
